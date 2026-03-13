@@ -240,9 +240,8 @@ if "Configuración" in menu:
             st.rerun()
     del_opt = a3.selectbox("Eliminar", ["—"] + list(st.session_state.config['estaciones'].keys()))
     if del_opt != "—" and a3.button("🗑️ Eliminar"):
-        if len(st.session_state.config['estaciones']) > 1:
-            del st.session_state.config['estaciones'][del_opt]
-            st.rerun()
+        del st.session_state.config['estaciones'][del_opt]
+        st.rerun()
     st.markdown('</div>', unsafe_allow_html=True)
 
     if st.button("💾  GUARDAR CONFIGURACIÓN", use_container_width=True):
@@ -263,13 +262,16 @@ elif "Ejecución" in menu:
         x3.markdown("\n".join([f"**{n}:** {p['ciclo']}s ±{p['var']}" for n, p in conf['estaciones'].items()]))
 
     if st.button("🚀  INICIAR CORRIDA DE PRODUCCIÓN", use_container_width=True, type="primary"):
-        with st.spinner("⚙️  Simulando..."):
-            r = run_simulation(conf)
-        if r:
-            st.session_state.results = r
-            st.success(f"✅ Simulación completada — {r['kpis']['unidades']} unidades producidas")
+        if not conf['estaciones']:
+            st.error("❌ Debes agregar al menos 1 estación de trabajo antes de simular.")
         else:
-            st.error("❌ La simulación no produjo resultados. Revisa los parámetros.")
+            with st.spinner("⚙️  Simulando..."):
+                r = run_simulation(conf)
+            if r:
+                st.session_state.results = r
+                st.success(f"✅ Simulación completada — {r['kpis']['unidades']} unidades producidas")
+            else:
+                st.error("❌ La simulación no produjo resultados. Revisa los parámetros.")
 
     R = st.session_state.results
     if not R:
