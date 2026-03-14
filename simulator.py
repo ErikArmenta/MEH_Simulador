@@ -149,18 +149,20 @@ import numpy as np
 # ══════════════════════════════════════════════════════════════════════════════
 
 class Workstation:
-    def __init__(self, env, name, ciclo, sigma, mtbf, mttr, kanban_cap):
+    def __init__(self, env, name, ciclo, sigma, mtbf, mttr, kanban_cap, idle_factor=0.0):
         self.env      = env
         self.name     = name
         self.ciclo    = ciclo
         self.sigma    = sigma
         self.mtbf     = mtbf
         self.mttr     = mttr
+        self.idle_factor = idle_factor  # Factor de tiempo muerto (0.0 - 0.15 = 0% - 15%)
         # Resource con capacity=kanban_cap limita piezas simultáneas en esta estación
         self.machine  = simpy.Resource(env, capacity=kanban_cap)
         self.stats    = []
         self.busy_time  = 0.0
         self.down_time  = 0.0
+        self.idle_time  = 0.0  # Tiempo muerto acumulado (cambios herramienta, microparos)
         self.broken   = False
 
         if mtbf > 0:
@@ -184,8 +186,57 @@ class Workstation:
             yield self.env.timeout(repair)
             self.broken = False
 
+    def _idle_events(self):
+        """
+        Genera tiempo muerto aleatorio usando distribución exponencial.
+
+        Simula eventos de tiempo muerto comunes en manufactura:
+        - Cambios de herramienta (tool changeovers)
+        - Esperas de material (material waiting)
+        - Microparos (micro-stops < 5 min)
+        - Ajustes menores (minor adjustments)
+        - Limpieza rápida (quick cleaning)
+
+        Returns:
+            float: Tiempo de idle en segundos (0 si idle_factor <= 0)
+
+        Distribución:
+            Exponencial con media = ciclo * idle_factor
+            Esto genera tiempos mayoritariamente cortos con ocasionales más largos,
+            reflejando el patrón real de microparos en planta.
+        """
+        if self.idle_factor <= 0:
+            return 0.0
+
+        # Media del tiempo muerto basada en el ciclo de la estación
+        # idle_factor de 0.10 = 10% del ciclo en promedio como tiempo muerto
+        mean_idle = self.ciclo * self.idle_factor
+
+        # Distribución exponencial: mayoría cortos, algunos largos
+        # Probabilidad de 63% de estar bajo la media, 37% sobre ella
+        idle_time = random.expovariate(1.0 / mean_idle) if mean_idle > 0 else 0.0
+
+        # Cap máximo: no más del 50% del ciclo para evitar valores extremos
+        max_idle = self.ciclo * 0.5
+        idle_time = min(idle_time, max_idle)
+
+        return max(0.0, idle_time)
+
     def process(self, part_id, arrival_time):
-        """Procesa una pieza. Usa request()/release() correctamente."""
+        """
+        Procesa una pieza con tiempo muerto aleatorio.
+        Usa request()/release() correctamente para control Kanban.
+
+        El proceso incluye:
+        1. Espera por capacidad Kanban (request)
+        2. Espera si máquina en paro (broken)
+        3. Tiempo de proceso con variabilidad normal
+        4. Tiempo muerto aleatorio (idle_events)
+
+        Args:
+            part_id: Identificador único de la pieza
+            arrival_time: Momento de llegada a la estación
+        """
         with self.machine.request() as req:
             yield req  # espera a que haya capacidad (Kanban)
 
@@ -194,19 +245,43 @@ class Workstation:
                 yield self.env.timeout(0.5)
 
             wait = round(self.env.now - arrival_time, 2)
-            t    = max(0.1, random.normalvariate(self.ciclo, self.sigma))
             t0   = self.env.now
-            yield self.env.timeout(t)
-            self.busy_time += t
+
+            # ── Tiempo de proceso con variabilidad ──────────────────────────
+            t_proceso = max(0.1, random.normalvariate(self.ciclo, self.sigma))
+            yield self.env.timeout(t_proceso)
+            self.busy_time += t_proceso
+
+            # ── Tiempo muerto aleatorio (idle) ──────────────────────────────
+            # Simula: cambios de herramienta, esperas de material, microparos
+            t_idle = self._idle_events()
+            if t_idle > 0:
+                yield self.env.timeout(t_idle)
+                self.idle_time += t_idle
+                # Registrar evento de idle si es significativo (> 0.5 seg)
+                if t_idle > 0.5:
+                    self.stats.append({
+                        "ID":       f"P-{part_id:04d}",
+                        "Estacion": self.name,
+                        "Espera":   0.0,
+                        "Inicio":   round(self.env.now - t_idle, 2),
+                        "Proceso":  round(t_idle, 2),
+                        "Salida":   round(self.env.now, 2),
+                        "Tipo":     "Idle"
+                    })
+
+            # Tiempo total = proceso + idle
+            t_total = t_proceso + t_idle
 
             self.stats.append({
                 "ID":       f"P-{part_id:04d}",
                 "Estacion": self.name,
                 "Espera":   wait,
                 "Inicio":   round(t0, 2),
-                "Proceso":  round(t, 2),
+                "Proceso":  round(t_proceso, 2),
                 "Salida":   round(self.env.now, 2),
-                "Tipo":     "Producción"
+                "Tipo":     "Producción",
+                "Idle":     round(t_idle, 2)  # Campo adicional para análisis
             })
         # Al salir del with, request se libera automáticamente → Kanban libera un slot
 
@@ -330,6 +405,11 @@ def run_simulation(config):
     # Mínimo de 1 para evitar bloqueo total del sistema
     kanban_cap = max(1, config['kanban'])
 
+    # ── CONFIGURACIÓN IDLE FACTOR ──────────────────────────────────────────
+    # Factor de tiempo muerto (0.0 - 0.15 = 0% - 15%)
+    # Simula microparos, cambios de herramienta, esperas de material
+    idle_factor = config.get('idle_factor', 0.0)
+
     # ── CREACIÓN DE ESTACIONES ────────────────────────────────────────────────
     # Cada estación es un proceso independiente con su propia cola Kanban
     workstations = []
@@ -338,7 +418,8 @@ def run_simulation(config):
             env, name,
             ciclo=p['ciclo'], sigma=p['var'],
             mtbf=config['mtbf'], mttr=config['mttr'],
-            kanban_cap=kanban_cap
+            kanban_cap=kanban_cap,
+            idle_factor=idle_factor
         )
         workstations.append(ws)
 
@@ -382,8 +463,14 @@ def run_simulation(config):
     # Ciclo Promedio: Media de lead times (tiempo total por pieza)
     ciclo_prom     = round(float(np.mean(lead_times)), 2) if lead_times else 0
 
+    # ── Tiempo Idle Total ───────────────────────────────────────────────────
+    # Suma de todos los tiempos muertos de todas las estaciones
+    total_idle     = sum(ws.idle_time for ws in workstations)
+    idle_pct       = round((total_idle / t_final) * 100, 2) if t_final > 0 else 0
+
     # Disponibilidad: % de tiempo que la línea estuvo operativa
-    # Fórmula: ((tiempo_total - tiempo_paros) / tiempo_total) × 100
+    # Fórmula: ((tiempo_total - tiempo_paros - tiempo_idle) / tiempo_total) × 100
+    # NOTA: El idle afecta disponibilidad efectiva pero se reporta separado
     total_down     = float(df_fail['Proceso'].sum()) if not df_fail.empty else 0
     disponibilidad = round(((t_final - total_down) / t_final) * 100, 1)
 
@@ -459,6 +546,10 @@ def run_simulation(config):
             "calidad":        calidad,        # % piezas conformes
             "t_final":        round(t_final, 1),  # Tiempo total simulación
             "total_fallas":   len(df_fail),   # Número de eventos de falla
+            # ── KPIs de Tiempo Muerto ───────────────────────────────────────
+            "idle_time_total": round(total_idle, 2),  # Tiempo idle total (segundos)
+            "idle_pct":        idle_pct,              # % de tiempo en idle
+            "idle_by_station": {ws.name: round(ws.idle_time, 2) for ws in workstations},
         },
 
         # Metadata
