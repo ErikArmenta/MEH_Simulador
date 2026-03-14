@@ -211,7 +211,7 @@ div[data-testid="stButton"] > button { font-family:'Rajdhani',sans-serif !import
 if 'config' not in st.session_state:
     st.session_state.config = {
         'piezas': 50, 'takt': 50, 'kanban': 5,
-        'mtbf': 800,  'mttr': 100,
+        'mtbf': 800,  'mttr': 100, 'idle_factor': 5,
         'estaciones': {
             'Ensamble':   {'ciclo': 40, 'var': 2},
             'Soldadura':  {'ciclo': 60, 'var': 5},
@@ -318,7 +318,7 @@ if "Configuración" in menu:
     st.markdown('</div>', unsafe_allow_html=True)
 
     # Bloque confiabilidad
-    st.markdown('<div class="param-card"><div class="param-title">🔧 Confiabilidad — MTBF / MTTR</div>', unsafe_allow_html=True)
+    st.markdown('<div class="param-card"><div class="param-title">🔧 Confiabilidad — MTBF / MTTR / Idle</div>', unsafe_allow_html=True)
     cf1, cf2, cf3 = st.columns([2, 2, 1])
     with cf1:
         st.session_state.config['mtbf'] = st.slider("MTBF · Tiempo entre fallas (s)", 100, 5000, st.session_state.config['mtbf'], 50)
@@ -332,6 +332,23 @@ if "Configuración" in menu:
                         padding:14px;text-align:center;margin-top:22px">
                         <div style="font-size:9px;color:#6b7fa3;letter-spacing:.1em;margin-bottom:4px">DISPONIBILIDAD TEÓRICA</div>
                         <div style="font-family:'Rajdhani',sans-serif;font-size:28px;font-weight:700;color:{dc}">{d}%</div>
+                        </div>""", unsafe_allow_html=True)
+    # Idle factor - tiempos muertos
+    idle_col1, idle_col2 = st.columns([3, 2])
+    with idle_col1:
+        st.session_state.config['idle_factor'] = st.slider(
+            "⏸️ Idle Factor · Tiempo muerto (%)",
+            min_value=0, max_value=15,
+            value=st.session_state.config.get('idle_factor', 5),
+            help="Porcentaje de tiempo perdido por microparos, cambios de herramienta, esperas de material y otras ineficiencias operativas."
+        )
+    with idle_col2:
+        idle_val = st.session_state.config['idle_factor']
+        idle_color = "#00ff9f" if idle_val <= 5 else ("#ffb800" if idle_val <= 10 else "#ff3b5c")
+        st.markdown(f"""<div style="background:#0a0e1a;border:1px solid #1e3a5f;border-radius:10px;
+                        padding:14px;text-align:center;margin-top:22px">
+                        <div style="font-size:9px;color:#6b7fa3;letter-spacing:.1em;margin-bottom:4px">IMPACTO TIEMPO MUERTO</div>
+                        <div style="font-family:'Rajdhani',sans-serif;font-size:28px;font-weight:700;color:{idle_color}">{idle_val}%</div>
                         </div>""", unsafe_allow_html=True)
     st.markdown('</div>', unsafe_allow_html=True)
 
