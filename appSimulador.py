@@ -211,7 +211,7 @@ div[data-testid="stButton"] > button { font-family:'Rajdhani',sans-serif !import
 if 'config' not in st.session_state:
     st.session_state.config = {
         'piezas': 50, 'takt': 50, 'kanban': 5,
-        'mtbf': 800,  'mttr': 100, 'idle_factor': 5,
+        'mtbf': 800,  'mttr': 100, 'idle_factor': 5, 'defect_rate': 2,
         'estaciones': {
             'Ensamble':   {'ciclo': 40, 'var': 2},
             'Soldadura':  {'ciclo': 60, 'var': 5},
@@ -318,7 +318,7 @@ if "Configuración" in menu:
     st.markdown('</div>', unsafe_allow_html=True)
 
     # Bloque confiabilidad
-    st.markdown('<div class="param-card"><div class="param-title">🔧 Confiabilidad — MTBF / MTTR / Idle</div>', unsafe_allow_html=True)
+    st.markdown('<div class="param-card"><div class="param-title">🔧 Confiabilidad — MTBF / MTTR / Idle / Scrap</div>', unsafe_allow_html=True)
     cf1, cf2, cf3 = st.columns([2, 2, 1])
     with cf1:
         st.session_state.config['mtbf'] = st.slider("MTBF · Tiempo entre fallas (s)", 100, 5000, st.session_state.config['mtbf'], 50)
@@ -349,6 +349,23 @@ if "Configuración" in menu:
                         padding:14px;text-align:center;margin-top:22px">
                         <div style="font-size:9px;color:#6b7fa3;letter-spacing:.1em;margin-bottom:4px">IMPACTO TIEMPO MUERTO</div>
                         <div style="font-family:'Rajdhani',sans-serif;font-size:28px;font-weight:700;color:{idle_color}">{idle_val}%</div>
+                        </div>""", unsafe_allow_html=True)
+    # Defect rate - tasa de scrap/rechazo
+    scrap_col1, scrap_col2 = st.columns([3, 2])
+    with scrap_col1:
+        st.session_state.config['defect_rate'] = st.slider(
+            "🗑️ Defect Rate · Tasa de Scrap (%)",
+            min_value=0, max_value=10,
+            value=st.session_state.config.get('defect_rate', 2),
+            help="Porcentaje de piezas defectuosas/rechazadas durante el proceso. Incluye defectos de calidad, retrabajos y scrap."
+        )
+    with scrap_col2:
+        defect_val = st.session_state.config['defect_rate']
+        defect_color = "#00ff9f" if defect_val <= 2 else ("#ffb800" if defect_val <= 5 else "#ff3b5c")
+        st.markdown(f"""<div style="background:#0a0e1a;border:1px solid #1e3a5f;border-radius:10px;
+                        padding:14px;text-align:center;margin-top:22px">
+                        <div style="font-size:9px;color:#6b7fa3;letter-spacing:.1em;margin-bottom:4px">IMPACTO CALIDAD</div>
+                        <div style="font-family:'Rajdhani',sans-serif;font-size:28px;font-weight:700;color:{defect_color}">{defect_val}%</div>
                         </div>""", unsafe_allow_html=True)
     st.markdown('</div>', unsafe_allow_html=True)
 
