@@ -245,6 +245,175 @@ def sec(icon, title, tag=""):
     t = f'<span class="sec-tag">{tag}</span>' if tag else ''
     return f'<div class="sec-hdr">{icon} {title} {t}</div>'
 
+# ─── CONFIG VALIDATION ───────────────────────────────────────────────────────
+def validate_config(config: dict) -> dict:
+    """
+    Valida la configuración de simulación y retorna warnings/errores.
+
+    Returns:
+        dict con claves:
+            - 'valid': bool - True si la configuración es ejecutable
+            - 'errors': list[str] - Errores críticos que impiden ejecución
+            - 'warnings': list[str] - Advertencias sobre valores subóptimos
+            - 'info': list[str] - Información adicional sobre la configuración
+    """
+    errors = []
+    warnings = []
+    info = []
+
+    # ─── RANGOS VÁLIDOS (hard limits) ────────────────────────────────────────
+    RANGES = {
+        'piezas':      (1, 10000, "Piezas a simular"),
+        'takt':        (1, 1000, "Takt Time (s)"),
+        'kanban':      (1, 200, "Capacidad Kanban"),
+        'mtbf':        (50, 10000, "MTBF (s)"),
+        'mttr':        (5, 2000, "MTTR (s)"),
+        'idle_factor': (0, 50, "Factor de Tiempo Muerto (%)"),
+        'defect_rate': (0, 50, "Tasa de Defectos (%)"),
+    }
+
+    # ─── RANGOS ÓPTIMOS (soft limits para warnings) ──────────────────────────
+    OPTIMAL = {
+        'piezas':      (10, 2000, "Valores muy bajos no son estadísticamente significativos; muy altos pueden ser lentos"),
+        'takt':        (20, 300, "Takt muy bajo puede ser irreal; muy alto reduce productividad"),
+        'kanban':      (2, 50, "Kanban=1 causa bloqueos; valores muy altos ocultan problemas de flujo"),
+        'mtbf':        (200, 3000, "MTBF muy bajo indica equipo en mal estado; muy alto puede ser optimista"),
+        'mttr':        (15, 500, "MTTR muy bajo puede ser irreal; muy alto indica problemas de mantenimiento"),
+        'idle_factor': (0, 15, "Idle >15% indica problemas serios de organización"),
+        'defect_rate': (0, 10, "Scrap >10% indica problemas graves de calidad"),
+    }
+
+    # ─── VALIDAR EXISTENCIA DE CAMPOS REQUERIDOS ─────────────────────────────
+    required_fields = ['piezas', 'takt', 'kanban', 'mtbf', 'mttr', 'estaciones']
+    for field in required_fields:
+        if field not in config:
+            errors.append(f"Campo requerido '{field}' no encontrado en configuración")
+
+    if errors:
+        return {'valid': False, 'errors': errors, 'warnings': warnings, 'info': info}
+
+    # ─── VALIDAR RANGOS DUROS ────────────────────────────────────────────────
+    for param, (min_val, max_val, label) in RANGES.items():
+        if param in config:
+            val = config.get(param, 0)
+            if not isinstance(val, (int, float)):
+                errors.append(f"{label}: valor '{val}' no es numérico")
+            elif val < min_val:
+                errors.append(f"{label}: {val} está por debajo del mínimo permitido ({min_val})")
+            elif val > max_val:
+                errors.append(f"{label}: {val} excede el máximo permitido ({max_val})")
+
+    # ─── VALIDAR ESTACIONES ──────────────────────────────────────────────────
+    estaciones = config.get('estaciones', {})
+    if not estaciones:
+        errors.append("Se requiere al menos una estación de trabajo")
+    else:
+        for name, params in estaciones.items():
+            if not isinstance(params, dict):
+                errors.append(f"Estación '{name}': configuración inválida")
+                continue
+
+            ciclo = params.get('ciclo', 0)
+            var = params.get('var', 0)
+
+            if not isinstance(ciclo, (int, float)) or ciclo < 1:
+                errors.append(f"Estación '{name}': ciclo debe ser >= 1 segundo")
+            elif ciclo > 600:
+                errors.append(f"Estación '{name}': ciclo {ciclo}s excede máximo (600s)")
+
+            if not isinstance(var, (int, float)) or var < 0:
+                errors.append(f"Estación '{name}': variabilidad no puede ser negativa")
+            elif var > ciclo * 0.5:
+                warnings.append(f"Estación '{name}': variabilidad ({var}s) es >50% del ciclo, puede causar inestabilidad")
+
+    # Si hay errores críticos, no continuar con validaciones de optimización
+    if errors:
+        return {'valid': False, 'errors': errors, 'warnings': warnings, 'info': info}
+
+    # ─── VALIDAR RANGOS ÓPTIMOS (warnings) ───────────────────────────────────
+    for param, (opt_min, opt_max, reason) in OPTIMAL.items():
+        if param in config:
+            val = config.get(param, 0)
+            if val < opt_min:
+                warnings.append(f"{param}={val} por debajo del óptimo ({opt_min}): {reason}")
+            elif val > opt_max:
+                warnings.append(f"{param}={val} por encima del óptimo ({opt_max}): {reason}")
+
+    # ─── VALIDACIONES DE RELACIÓN ENTRE PARÁMETROS ───────────────────────────
+    takt = config['takt']
+    mtbf = config['mtbf']
+    mttr = config['mttr']
+
+    # Disponibilidad teórica
+    disponibilidad = (mtbf / (mtbf + mttr)) * 100
+    if disponibilidad < 70:
+        warnings.append(f"Disponibilidad teórica {disponibilidad:.1f}% < 70% (MTBF/MTTR ratio bajo)")
+    elif disponibilidad < 85:
+        info.append(f"Disponibilidad teórica {disponibilidad:.1f}% - considere mejorar MTBF o reducir MTTR")
+
+    # Ratio MTBF/MTTR
+    ratio = mtbf / max(1, mttr)
+    if ratio < 4:
+        warnings.append(f"Ratio MTBF/MTTR = {ratio:.1f} es crítico (recomendado > 8)")
+    elif ratio < 8:
+        info.append(f"Ratio MTBF/MTTR = {ratio:.1f} es aceptable pero mejorable")
+
+    # Ciclos vs Takt (cuellos de botella)
+    for name, params in estaciones.items():
+        ciclo = params.get('ciclo', 0)
+        if ciclo > takt * 1.2:
+            warnings.append(f"Estación '{name}': ciclo ({ciclo}s) > 120% del Takt ({takt}s) - cuello de botella")
+        elif ciclo > takt:
+            info.append(f"Estación '{name}': ciclo ({ciclo}s) ligeramente > Takt ({takt}s)")
+
+    # Factor de pérdida combinado
+    idle_factor = config.get('idle_factor', 0)
+    defect_rate = config.get('defect_rate', 0)
+    perdida_total = idle_factor + defect_rate
+    if perdida_total > 20:
+        warnings.append(f"Pérdida combinada (idle + scrap) = {perdida_total}% - revisar procesos")
+
+    # OEE teórico estimado
+    rendimiento_est = min(100, (takt / max(1, max(p['ciclo'] for p in estaciones.values()))) * 100)
+    calidad_est = 100 - defect_rate
+    oee_teorico = (disponibilidad / 100) * (rendimiento_est / 100) * (calidad_est / 100) * 100
+    if oee_teorico < 50:
+        warnings.append(f"OEE teórico estimado {oee_teorico:.1f}% < 50% - revisar configuración")
+    elif oee_teorico < 65:
+        info.append(f"OEE teórico estimado {oee_teorico:.1f}% - hay oportunidad de mejora")
+
+    # Tiempo de simulación estimado
+    tiempo_sim_est = config['piezas'] * max(p['ciclo'] for p in estaciones.values())
+    if tiempo_sim_est > 50000:
+        info.append(f"Simulación larga estimada (~{tiempo_sim_est/60:.0f} min simulados)")
+
+    return {
+        'valid': True,
+        'errors': errors,
+        'warnings': warnings,
+        'info': info,
+        'metrics': {
+            'disponibilidad_teorica': round(disponibilidad, 1),
+            'oee_teorico': round(oee_teorico, 1),
+            'ratio_mtbf_mttr': round(ratio, 2),
+        }
+    }
+
+def show_validation_results(validation: dict):
+    """Muestra los resultados de validación en la UI de Streamlit."""
+    if validation['errors']:
+        for err in validation['errors']:
+            st.error(f"❌ {err}")
+
+    if validation['warnings']:
+        for warn in validation['warnings']:
+            st.warning(f"⚠️ {warn}")
+
+    if validation.get('info'):
+        with st.expander("ℹ️ Información adicional", expanded=False):
+            for inf in validation['info']:
+                st.info(inf)
+
 # ─── SIDEBAR ─────────────────────────────────────────────────────────────────
 with st.sidebar:
     logo_path = "EA_2.png"
@@ -414,6 +583,34 @@ if "Configuración" in menu:
     if st.button("💾  GUARDAR CONFIGURACIÓN", use_container_width=True):
         st.success("✅ Configuración guardada.")
 
+    # ─── VALIDACIÓN EN TIEMPO REAL ───────────────────────────────────────────
+    st.markdown("<hr style='border-color:#1e3a5f;margin:20px 0'>", unsafe_allow_html=True)
+    st.markdown(sec("🔍", "VALIDACIÓN DE CONFIGURACIÓN", "Live Check"), unsafe_allow_html=True)
+
+    validation = validate_config(st.session_state.config)
+
+    if validation['valid']:
+        metrics = validation.get('metrics', {})
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Disponibilidad Teórica", f"{metrics.get('disponibilidad_teorica', 0)}%",
+                  delta="OK" if metrics.get('disponibilidad_teorica', 0) >= 85 else "Mejorable",
+                  delta_color="normal" if metrics.get('disponibilidad_teorica', 0) >= 85 else "off")
+        m2.metric("OEE Teórico Estimado", f"{metrics.get('oee_teorico', 0)}%",
+                  delta="Bueno" if metrics.get('oee_teorico', 0) >= 65 else "Bajo",
+                  delta_color="normal" if metrics.get('oee_teorico', 0) >= 65 else "off")
+        m3.metric("Ratio MTBF/MTTR", f"{metrics.get('ratio_mtbf_mttr', 0)}",
+                  delta="Óptimo" if metrics.get('ratio_mtbf_mttr', 0) >= 8 else "Revisar",
+                  delta_color="normal" if metrics.get('ratio_mtbf_mttr', 0) >= 8 else "off")
+
+        if validation['warnings'] or validation.get('info'):
+            with st.expander(f"⚠️ {len(validation['warnings'])} advertencias · {len(validation.get('info', []))} notas", expanded=False):
+                show_validation_results(validation)
+        else:
+            st.success("✅ Configuración válida y optimizada - lista para simular")
+    else:
+        st.error("❌ Configuración con errores críticos")
+        show_validation_results(validation)
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # MÓDULO 2 · EJECUCIÓN
@@ -429,9 +626,18 @@ elif "Ejecución" in menu:
         x3.markdown("\n".join([f"**{n}:** {p['ciclo']}s ±{p['var']}" for n, p in conf['estaciones'].items()]))
 
     if st.button("🚀  INICIAR CORRIDA DE PRODUCCIÓN", use_container_width=True, type="primary"):
-        if not conf['estaciones']:
-            st.error("❌ Debes agregar al menos 1 estación de trabajo antes de simular.")
+        # Validar configuración antes de ejecutar
+        validation = validate_config(conf)
+
+        if not validation['valid']:
+            st.error("❌ Configuración inválida - no se puede ejecutar simulación")
+            show_validation_results(validation)
         else:
+            # Mostrar warnings si existen, pero permitir ejecución
+            if validation['warnings']:
+                with st.expander("⚠️ Advertencias de configuración", expanded=True):
+                    show_validation_results(validation)
+
             with st.spinner("⚙️  Simulando..."):
                 r = run_simulation(conf)
             if r:
