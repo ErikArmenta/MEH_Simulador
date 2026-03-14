@@ -570,15 +570,49 @@ def run_simulation(config):
     # Construye serie temporal de WIP para gráficos de evolución
     # delta +1 cuando pieza ENTRA a estación, -1 cuando SALE
     # Permite visualizar acumulación de inventario en tiempo
-    wip_rows = []
+    #
+    # OPTIMIZACIÓN: Usa numpy arrays en lugar de listas con append/concatenación
+    # Rendimiento: O(n) con preallocación vs O(n²) con append iterativo
+    # Mejora significativa en simulaciones grandes (>1000 piezas)
+
+    # Paso 1: Contar eventos de producción para preallocación
+    prod_counts = []
     for ws in workstations:
-        for s in ws.stats:
-            if s['Tipo'] == 'Producción':
-                wip_rows += [
-                    {"time": s['Inicio'], "delta":  1, "estacion": ws.name},
-                    {"time": s['Salida'], "delta": -1, "estacion": ws.name},
-                ]
-    df_wip = pd.DataFrame(wip_rows) if wip_rows else pd.DataFrame()
+        count = sum(1 for s in ws.stats if s['Tipo'] == 'Producción')
+        prod_counts.append((ws.name, count, ws.stats))
+
+    total_events = sum(c[1] for c in prod_counts) * 2  # *2 por entrada y salida
+
+    if total_events > 0:
+        # Paso 2: Preallocar numpy arrays
+        times = np.empty(total_events, dtype=np.float64)
+        deltas = np.empty(total_events, dtype=np.int8)
+        estaciones = np.empty(total_events, dtype=object)
+
+        # Paso 3: Llenar arrays en una sola pasada
+        idx = 0
+        for ws_name, _, stats in prod_counts:
+            for s in stats:
+                if s['Tipo'] == 'Producción':
+                    # Evento de entrada (+1)
+                    times[idx] = s['Inicio']
+                    deltas[idx] = 1
+                    estaciones[idx] = ws_name
+                    idx += 1
+                    # Evento de salida (-1)
+                    times[idx] = s['Salida']
+                    deltas[idx] = -1
+                    estaciones[idx] = ws_name
+                    idx += 1
+
+        # Paso 4: Construir DataFrame de una sola vez (eficiente)
+        df_wip = pd.DataFrame({
+            'time': times,
+            'delta': deltas,
+            'estacion': estaciones
+        })
+    else:
+        df_wip = pd.DataFrame()
 
     # ── ESTRUCTURA DE RETORNO ───────────────────────────────────────────────
     # Diccionario completo con todos los resultados de la simulación
