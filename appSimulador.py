@@ -220,6 +220,8 @@ if 'config' not in st.session_state:
     }
 if 'results' not in st.session_state:
     st.session_state.results = None
+if 'previous_results' not in st.session_state:
+    st.session_state.previous_results = None
 
 # ─── HELPERS ─────────────────────────────────────────────────────────────────
 PALETTE = ['#00d4ff','#ff6b35','#00ff9f','#ffb800','#9b59b6','#e74c3c','#1abc9c']
@@ -244,6 +246,31 @@ def kpi(label, value, sub="", color="#00d4ff"):
 def sec(icon, title, tag=""):
     t = f'<span class="sec-tag">{tag}</span>' if tag else ''
     return f'<div class="sec-hdr">{icon} {title} {t}</div>'
+
+def calc_delta(current, previous, higher_is_better=True):
+    """Calcula delta porcentual entre valores actual y anterior."""
+    if previous == 0:
+        return None, None
+    delta = ((current - previous) / previous) * 100
+    is_positive = (delta > 0 and higher_is_better) or (delta < 0 and not higher_is_better)
+    return round(delta, 1), is_positive
+
+def comparison_row(label, current, previous, unit="", higher_is_better=True):
+    """Genera HTML para una fila de comparación de KPIs."""
+    delta, is_positive = calc_delta(current, previous, higher_is_better)
+    if delta is None:
+        delta_html = '<span style="color:#6b7fa3">N/A</span>'
+    else:
+        color = "#00ff9f" if is_positive else "#ff3b5c"
+        arrow = "↑" if delta > 0 else "↓" if delta < 0 else "→"
+        delta_html = f'<span style="color:{color}">{arrow} {abs(delta)}%</span>'
+    return f'''
+    <tr>
+        <td style="padding:8px 12px;color:#e8edf5;font-weight:500">{label}</td>
+        <td style="padding:8px 12px;text-align:center;color:#6b7fa3">{previous}{unit}</td>
+        <td style="padding:8px 12px;text-align:center;color:#00d4ff;font-weight:600">{current}{unit}</td>
+        <td style="padding:8px 12px;text-align:center">{delta_html}</td>
+    </tr>'''
 
 # ─── CONFIG VALIDATION ───────────────────────────────────────────────────────
 def validate_config(config: dict) -> dict:
@@ -641,6 +668,9 @@ elif "Ejecución" in menu:
             with st.spinner("⚙️  Simulando..."):
                 r = run_simulation(conf)
             if r:
+                # Guardar resultado anterior para comparación de escenarios
+                if st.session_state.results is not None:
+                    st.session_state.previous_results = st.session_state.results
                 st.session_state.results = r
                 st.success(f"✅ Simulación completada — {r['kpis']['unidades']} unidades producidas")
             else:
@@ -675,6 +705,36 @@ elif "Ejecución" in menu:
         + kpi("FALLAS TOTALES",      k['total_fallas'], "eventos de paro",      "#ff3b5c")
         + kpi("RENDIMIENTO",         f"{k['rendimiento']}%", "Performance OEE", "#ff6b35")
         + '</div>', unsafe_allow_html=True)
+
+    # ── COMPARADOR DE ESCENARIOS ────────────────────────────────────────────
+    prev = st.session_state.previous_results
+    if prev:
+        pk = prev['kpis']
+        with st.expander("📊 Comparar con escenario anterior", expanded=False):
+            st.markdown('''
+            <div style="background:#111827;border-radius:12px;padding:16px;border:1px solid #1e3a5f">
+                <table style="width:100%;border-collapse:collapse;font-size:13px">
+                    <thead>
+                        <tr style="border-bottom:1px solid #1e3a5f">
+                            <th style="padding:8px 12px;text-align:left;color:#6b7fa3;font-weight:600">KPI</th>
+                            <th style="padding:8px 12px;text-align:center;color:#6b7fa3;font-weight:600">Anterior</th>
+                            <th style="padding:8px 12px;text-align:center;color:#6b7fa3;font-weight:600">Actual</th>
+                            <th style="padding:8px 12px;text-align:center;color:#6b7fa3;font-weight:600">Delta</th>
+                        </tr>
+                    </thead>
+                    <tbody>'''
+                + comparison_row("Unidades Producidas", k['unidades'], pk['unidades'])
+                + comparison_row("Throughput (pzas/h)", k['throughput'], pk['throughput'])
+                + comparison_row("OEE", k['oee'], pk['oee'], "%")
+                + comparison_row("Disponibilidad", k['disponibilidad'], pk['disponibilidad'], "%")
+                + comparison_row("Tiempo de Ciclo", k['ciclo_promedio'], pk['ciclo_promedio'], "s", higher_is_better=False)
+                + comparison_row("Fallas Totales", k['total_fallas'], pk['total_fallas'], "", higher_is_better=False)
+                + comparison_row("Rendimiento", k['rendimiento'], pk['rendimiento'], "%")
+                + comparison_row("Tasa de Scrap", k.get('scrap_rate', 0), pk.get('scrap_rate', 0), "%", higher_is_better=False)
+                + '''
+                    </tbody>
+                </table>
+            </div>''', unsafe_allow_html=True)
 
     # ROW 1
     g1, g2 = st.columns(2)
