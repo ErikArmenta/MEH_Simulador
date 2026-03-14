@@ -125,7 +125,8 @@
 #
 # 2. REPRODUCIBILIDAD:
 #    - random.seed(None) por defecto para variabilidad real
-#    - Preparado para seed configurable en mejoras futuras
+#    - Parámetro 'seed' configurable: si es número, resultados reproducibles
+#    - Útil para debugging, comparación de escenarios, y pruebas automatizadas
 #
 # 3. ROBUSTEZ:
 #    - Manejo de casos edge: df vacío, t_final=0, unidades=0
@@ -404,6 +405,9 @@ def _arrivals(env, n, workstations, takt, results, lead_times):
 #       'kanban': int,           # Capacidad Kanban por estación
 #       'mtbf': float,           # Mean Time Between Failures (segundos)
 #       'mttr': float,           # Mean Time To Repair (segundos)
+#       'idle_factor': float,    # Factor de tiempo muerto (0.0-0.15) [opcional]
+#       'defect_rate': float,    # Tasa de defectos/scrap (0.0-0.10) [opcional]
+#       'seed': int|None,        # Semilla para reproducibilidad [opcional]
 #       'estaciones': {          # Diccionario de estaciones
 #           'nombre': {
 #               'ciclo': float,  # Tiempo de ciclo (segundos)
@@ -421,13 +425,22 @@ def run_simulation(config):
 
     Args:
         config: Diccionario con parámetros de simulación
+            - seed (int|None): Semilla para reproducibilidad. Si es None, cada
+              corrida produce resultados diferentes. Si es un número entero,
+              la misma semilla produce resultados idénticos (útil para debugging,
+              comparación de escenarios, y pruebas automatizadas).
 
     Returns:
         dict: Resultados completos incluyendo DataFrames y KPIs
         None: Si la simulación no produce resultados válidos
     """
-    # Semilla aleatoria para variabilidad real en cada corrida
-    random.seed(None)
+    # ── SEMILLA PARA REPRODUCIBILIDAD ────────────────────────────────────────
+    # seed=None: Variabilidad real en cada corrida (comportamiento por defecto)
+    # seed=<int>: Resultados reproducibles (misma semilla = mismos resultados)
+    # Útil para: debugging, comparación de escenarios A/B, pruebas unitarias
+    seed = config.get('seed', None)
+    random.seed(seed)
+
     env = simpy.Environment()
 
     # ── CONFIGURACIÓN KANBAN ────────────────────────────────────────────────
@@ -611,4 +624,5 @@ def run_simulation(config):
 
         # Metadata
         "estaciones_names": [ws.name for ws in workstations],  # Nombres ordenados
+        "seed_used": seed,  # Semilla usada (None si fue aleatoria)
     }
