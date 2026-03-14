@@ -95,7 +95,8 @@
 # │ Disponibilidad     │ ((t_final - downtime) / t_final) × 100%               │
 # │ Utilización        │ (busy_time / t_final) × 100% por estación             │
 # │ Rendimiento        │ (ciclo_promedio / takt) × 100%                        │
-# │ Calidad            │ 98.5% (fijo, se mejorará con scrap_rate)              │
+# │ Calidad            │ (piezas_buenas / piezas_totales) × 100% (real)        │
+# │ Scrap Rate         │ (piezas_scrap / piezas_totales) × 100%                │
 # │ OEE                │ Disponibilidad × Rendimiento × Calidad                │
 # └────────────────────┴────────────────────────────────────────────────────────┘
 #
@@ -149,7 +150,7 @@ import numpy as np
 # ══════════════════════════════════════════════════════════════════════════════
 
 class Workstation:
-    def __init__(self, env, name, ciclo, sigma, mtbf, mttr, kanban_cap, idle_factor=0.0):
+    def __init__(self, env, name, ciclo, sigma, mtbf, mttr, kanban_cap, idle_factor=0.0, defect_rate=0.0):
         self.env      = env
         self.name     = name
         self.ciclo    = ciclo
@@ -157,12 +158,15 @@ class Workstation:
         self.mtbf     = mtbf
         self.mttr     = mttr
         self.idle_factor = idle_factor  # Factor de tiempo muerto (0.0 - 0.15 = 0% - 15%)
+        self.defect_rate = defect_rate  # Tasa de defectos/scrap (0.0 - 0.10 = 0% - 10%)
         # Resource con capacity=kanban_cap limita piezas simultáneas en esta estación
         self.machine  = simpy.Resource(env, capacity=kanban_cap)
         self.stats    = []
         self.busy_time  = 0.0
         self.down_time  = 0.0
         self.idle_time  = 0.0  # Tiempo muerto acumulado (cambios herramienta, microparos)
+        self.scrap_count = 0   # Contador de piezas defectuosas/scrap
+        self.good_count  = 0   # Contador de piezas buenas
         self.broken   = False
 
         if mtbf > 0:
@@ -273,16 +277,41 @@ class Workstation:
             # Tiempo total = proceso + idle
             t_total = t_proceso + t_idle
 
-            self.stats.append({
-                "ID":       f"P-{part_id:04d}",
-                "Estacion": self.name,
-                "Espera":   wait,
-                "Inicio":   round(t0, 2),
-                "Proceso":  round(t_proceso, 2),
-                "Salida":   round(self.env.now, 2),
-                "Tipo":     "Producción",
-                "Idle":     round(t_idle, 2)  # Campo adicional para análisis
-            })
+            # ── Verificación de Scrap/Defectos ────────────────────────────────
+            # Simula inspección de calidad: si random < defect_rate, pieza es scrap
+            # Causas típicas en manufactura:
+            # - Defectos dimensionales (fuera de tolerancia)
+            # - Defectos superficiales (rayaduras, golpes)
+            # - Defectos de material (porosidad, inclusiones)
+            # - Errores de ensamble (componentes mal colocados)
+            is_scrap = random.random() < self.defect_rate
+
+            if is_scrap:
+                self.scrap_count += 1
+                self.stats.append({
+                    "ID":       f"P-{part_id:04d}",
+                    "Estacion": self.name,
+                    "Espera":   wait,
+                    "Inicio":   round(t0, 2),
+                    "Proceso":  round(t_proceso, 2),
+                    "Salida":   round(self.env.now, 2),
+                    "Tipo":     "Scrap",
+                    "Idle":     round(t_idle, 2),
+                    "Defecto":  True
+                })
+            else:
+                self.good_count += 1
+                self.stats.append({
+                    "ID":       f"P-{part_id:04d}",
+                    "Estacion": self.name,
+                    "Espera":   wait,
+                    "Inicio":   round(t0, 2),
+                    "Proceso":  round(t_proceso, 2),
+                    "Salida":   round(self.env.now, 2),
+                    "Tipo":     "Producción",
+                    "Idle":     round(t_idle, 2),
+                    "Defecto":  False
+                })
         # Al salir del with, request se libera automáticamente → Kanban libera un slot
 
 
@@ -410,6 +439,11 @@ def run_simulation(config):
     # Simula microparos, cambios de herramienta, esperas de material
     idle_factor = config.get('idle_factor', 0.0)
 
+    # ── CONFIGURACIÓN DEFECT RATE ──────────────────────────────────────────
+    # Tasa de defectos/scrap (0.0 - 0.10 = 0% - 10%)
+    # Simula piezas defectuosas que no pasan inspección de calidad
+    defect_rate = config.get('defect_rate', 0.0)
+
     # ── CREACIÓN DE ESTACIONES ────────────────────────────────────────────────
     # Cada estación es un proceso independiente con su propia cola Kanban
     workstations = []
@@ -419,7 +453,8 @@ def run_simulation(config):
             ciclo=p['ciclo'], sigma=p['var'],
             mtbf=config['mtbf'], mttr=config['mttr'],
             kanban_cap=kanban_cap,
-            idle_factor=idle_factor
+            idle_factor=idle_factor,
+            defect_rate=defect_rate
         )
         workstations.append(ws)
 
@@ -449,6 +484,7 @@ def run_simulation(config):
     df_total = pd.DataFrame(all_stats)
     df_prod  = df_total[df_total['Tipo'] == 'Producción'].copy()
     df_fail  = df_total[df_total['Tipo'] == 'Downtime'].copy()
+    df_scrap = df_total[df_total['Tipo'] == 'Scrap'].copy()  # Eventos de scrap
 
     t_final  = df_total['Salida'].max()
     unidades = len(results)
@@ -468,6 +504,23 @@ def run_simulation(config):
     total_idle     = sum(ws.idle_time for ws in workstations)
     idle_pct       = round((total_idle / t_final) * 100, 2) if t_final > 0 else 0
 
+    # ── Conteo de Scrap y Calidad Real ──────────────────────────────────────
+    # Suma de todas las piezas scrap y buenas de todas las estaciones
+    total_scrap    = sum(ws.scrap_count for ws in workstations)
+    total_good     = sum(ws.good_count for ws in workstations)
+    total_produced = total_scrap + total_good
+
+    # Calidad Real: % de piezas conformes basado en producción real
+    # Fórmula: (piezas_buenas / piezas_totales) × 100
+    # Si no hay producción, usar 100% (sin defectos)
+    if total_produced > 0:
+        calidad = round((total_good / total_produced) * 100, 1)
+    else:
+        calidad = 100.0
+
+    # Tasa de scrap: % de piezas defectuosas
+    scrap_rate = round((total_scrap / total_produced) * 100, 2) if total_produced > 0 else 0.0
+
     # Disponibilidad: % de tiempo que la línea estuvo operativa
     # Fórmula: ((tiempo_total - tiempo_paros - tiempo_idle) / tiempo_total) × 100
     # NOTA: El idle afecta disponibilidad efectiva pero se reporta separado
@@ -479,9 +532,6 @@ def run_simulation(config):
 
     # Rendimiento: Relación ciclo real vs takt objetivo (capped a 100%)
     rendimiento    = round(min(100.0, (ciclo_prom / max(1, config['takt'])) * 100), 1)
-
-    # Calidad: Porcentaje de piezas conformes (fijo por ahora, se mejorará con scrap_rate)
-    calidad        = 98.5
 
     # OEE (Overall Equipment Effectiveness): Métrica compuesta de manufactura
     # OEE = Disponibilidad × Rendimiento × Calidad
@@ -522,9 +572,10 @@ def run_simulation(config):
     # Diseñado para consumo directo por appSimulador.py (Streamlit frontend)
     return {
         # DataFrames de eventos
-        "df_total":       df_total,       # Todos los eventos (producción + downtime)
-        "df_prod":        df_prod,        # Solo eventos de producción
+        "df_total":       df_total,       # Todos los eventos (producción + downtime + scrap)
+        "df_prod":        df_prod,        # Solo eventos de producción (piezas buenas)
         "df_fail":        df_fail,        # Solo eventos de downtime/fallas
+        "df_scrap":       df_scrap,       # Solo eventos de scrap (piezas defectuosas)
         "df_wip":         df_wip,         # Serie temporal de WIP
 
         # DataFrames de análisis
@@ -543,13 +594,19 @@ def run_simulation(config):
             "util_data":      util_data,      # Utilización por estación
             "oee":            oee,            # Overall Equipment Effectiveness
             "rendimiento":    rendimiento,    # % rendimiento vs takt
-            "calidad":        calidad,        # % piezas conformes
+            "calidad":        calidad,        # % piezas conformes (calculado real)
             "t_final":        round(t_final, 1),  # Tiempo total simulación
             "total_fallas":   len(df_fail),   # Número de eventos de falla
             # ── KPIs de Tiempo Muerto ───────────────────────────────────────
             "idle_time_total": round(total_idle, 2),  # Tiempo idle total (segundos)
             "idle_pct":        idle_pct,              # % de tiempo en idle
             "idle_by_station": {ws.name: round(ws.idle_time, 2) for ws in workstations},
+            # ── KPIs de Scrap/Calidad ────────────────────────────────────────
+            "scrap_count":     total_scrap,    # Total de piezas scrap
+            "good_count":      total_good,     # Total de piezas buenas
+            "scrap_rate":      scrap_rate,     # % tasa de scrap
+            "scrap_by_station": {ws.name: ws.scrap_count for ws in workstations},
+            "good_by_station":  {ws.name: ws.good_count for ws in workstations},
         },
 
         # Metadata
