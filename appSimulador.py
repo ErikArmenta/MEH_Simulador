@@ -1,5 +1,130 @@
 # app.py — Master Engineering Hub · Simulador de Manufactura
 # Desarrollado por Master Engineer Erik Armenta
+#
+# =============================================================================
+# DOCUMENTACIÓN ARQUITECTÓNICA — ANÁLISIS PROFUNDO
+# =============================================================================
+#
+# DESCRIPCIÓN GENERAL:
+# -------------------
+# Aplicación web de simulación de manufactura construida con Streamlit que
+# integra un motor de simulación de eventos discretos (SimPy) con visualizaciones
+# interactivas (Plotly/Altair) para análisis de líneas de producción.
+#
+# ARQUITECTURA DEL SISTEMA:
+# -------------------------
+# ┌─────────────────────────────────────────────────────────────────────────┐
+# │                        FRONTEND (Streamlit)                             │
+# │  ┌─────────────┬─────────────┬─────────────┬─────────────┬───────────┐  │
+# │  │ Módulo 1    │ Módulo 2    │ Módulo 3    │ Módulo 4    │ Módulo 5  │  │
+# │  │ Configuración│ Balanceo   │ Ejecución   │ Dashboard   │ Confiab.  │  │
+# │  │ (Setup)     │ (Line Bal.) │ (SimPy)     │ (KPIs)      │ (MTBF)    │  │
+# │  └──────┬──────┴──────┬──────┴──────┬──────┴──────┬──────┴─────┬─────┘  │
+# │         │             │             │             │            │        │
+# │  ┌──────▼─────────────▼─────────────▼─────────────▼────────────▼─────┐  │
+# │  │                    st.session_state (Persistencia)                │  │
+# │  │   config: {piezas, takt, kanban, mtbf, mttr, estaciones}         │  │
+# │  │   results: {kpis, df_prod, df_fail, df_wip, bottleneck_df}       │  │
+# │  └───────────────────────────────────────────────────────────────────┘  │
+# └─────────────────────────────────────────────────────────────────────────┘
+#                                     │
+#                                     ▼
+# ┌─────────────────────────────────────────────────────────────────────────┐
+# │                        BACKEND (Motor SimPy)                            │
+# │  ┌─────────────────────────────────────────────────────────────────┐   │
+# │  │  simulator.py: run_simulation(config)                           │   │
+# │  │    - Clase Workstation: ciclo, variabilidad, MTBF/MTTR         │   │
+# │  │    - Control Kanban via simpy.Resource                          │   │
+# │  │    - Generación de eventos: producción, fallas, reparaciones    │   │
+# │  └─────────────────────────────────────────────────────────────────┘   │
+# │  ┌─────────────────────────────────────────────────────────────────┐   │
+# │  │  line_balancer.py: Algoritmos de balanceo                       │   │
+# │  │    - LCR (Largest Candidate Rule)                               │   │
+# │  │    - RPW (Ranked Positional Weight)                             │   │
+# │  │    - Optimización de operadores                                 │   │
+# │  └─────────────────────────────────────────────────────────────────┘   │
+# └─────────────────────────────────────────────────────────────────────────┘
+#
+# ESTRUCTURA DE MÓDULOS (856 líneas):
+# -----------------------------------
+# Líneas 001-016: Imports (streamlit, pandas, numpy, plotly, altair, simpy)
+# Líneas 018-024: Configuración de página Streamlit (layout wide, sidebar)
+# Líneas 026-083: CSS profesional (variables CSS, KPI cards, tema oscuro)
+# Líneas 085-098: Session state (config, results para persistencia)
+# Líneas 099-122: Helpers (PALETTE colores, PT template Plotly, kpi(), sec())
+# Líneas 123-176: Sidebar (logo, menú módulos, resumen última corrida)
+#
+# MÓDULO 1 — CONFIGURACIÓN DE PLANTA (líneas 178-249):
+#   - Parámetros generales: piezas, takt time, capacidad kanban
+#   - Confiabilidad: MTBF (tiempo entre fallas), MTTR (tiempo reparación)
+#   - Estaciones de trabajo: ciclo, variabilidad σ, ratio ciclo/takt
+#   - CRUD de estaciones (agregar/eliminar dinámicamente)
+#
+# MÓDULO 2 — EJECUCIÓN Y ANÁLISIS (líneas 251-387):
+#   - Invoca run_simulation(config) del motor SimPy
+#   - KPI cards: unidades, throughput, OEE, disponibilidad, ciclo, fallas
+#   - Gráficas: cuellos de botella, utilización, histograma esperas
+#   - Diagrama Gantt de producción (primeras 50 piezas)
+#   - Trazabilidad producción vs paros
+#
+# MÓDULO 3 — DASHBOARD KPIs (líneas 389-494):
+#   - Gauge OEE con breakdown: Disponibilidad × Rendimiento × Calidad
+#   - Box plot distribución ciclos vs takt time
+#   - WIP acumulado por estación (línea temporal)
+#   - Throughput instantáneo y producción acumulada
+#
+# MÓDULO 4 — CONFIABILIDAD (líneas 497-549):
+#   - Análisis de eventos de paro (fallas)
+#   - Downtime total por estación
+#   - Distribución duración de fallas (histograma)
+#   - Timeline eventos de paro
+#
+# MÓDULO 5 — REPORTE (líneas 552-585):
+#   - Resumen ejecutivo de la simulación
+#   - Estadísticas por estación
+#   - Identificación de cuellos de botella
+#   - Export CSV (datos completos, KPIs)
+#
+# MÓDULO 6 — BALANCEO DE LÍNEAS (líneas 588-856):
+#   - Definición de tareas con precedencias
+#   - Algoritmos: LCR (Largest Candidate Rule), RPW (Ranked Positional Weight)
+#   - Métricas: eficiencia η, índice suavidad, % idle
+#   - Optimización de operadores (headcount)
+#   - Diagrama de precedencias interactivo
+#   - Aplicar balanceo a simulación
+#
+# FLUJO DE DATOS:
+# ---------------
+# 1. Usuario configura parámetros en Módulo 1 → st.session_state.config
+# 2. Usuario ejecuta simulación en Módulo 2 → run_simulation(config)
+# 3. Resultados se almacenan en st.session_state.results
+# 4. Módulos 3-5 leen results para visualizaciones
+# 5. Módulo 6 puede recalcular estaciones y aplicar a config
+#
+# PATRONES DE DISEÑO:
+# -------------------
+# - State Management: session_state para persistencia entre reruns
+# - Component Pattern: funciones helper kpi(), sec() para UI consistente
+# - Template Pattern: PT dict para estilos Plotly uniformes
+# - Module Pattern: separación clara de responsabilidades por módulo
+#
+# DEPENDENCIAS:
+# -------------
+# - streamlit: Framework web para interfaces de datos
+# - pandas/numpy: Manipulación de datos y cálculos
+# - plotly: Visualizaciones interactivas (barras, gauges, scatter, timeline)
+# - altair: Visualizaciones declarativas (histogramas)
+# - simpy: Motor de simulación de eventos discretos (via simulator.py)
+#
+# KPIs CALCULADOS:
+# ----------------
+# - OEE = Disponibilidad × Rendimiento × Calidad
+# - Disponibilidad = MTBF / (MTBF + MTTR)
+# - Throughput = Unidades / Tiempo (unidades/hora)
+# - Utilización = Tiempo activo / Tiempo total por estación
+# - Eficiencia balanceo η = Σ tiempos tarea / (N estaciones × Takt)
+#
+# =============================================================================
 
 import streamlit as st
 import pandas as pd
