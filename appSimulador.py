@@ -290,9 +290,17 @@ with st.sidebar:
                 <span style="font-size:11px;color:#6b7fa3">OEE</span>
                 <span style="font-family:'Rajdhani',sans-serif;font-size:14px;color:{oc};font-weight:700">{k['oee']}%</span>
             </div>
-            <div style="display:flex;justify-content:space-between">
+            <div style="display:flex;justify-content:space-between;margin-bottom:5px">
                 <span style="font-size:11px;color:#6b7fa3">Throughput</span>
                 <span style="font-family:'Rajdhani',sans-serif;font-size:14px;color:#00ff9f;font-weight:700">{k['throughput']} u/h</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;margin-bottom:5px">
+                <span style="font-size:11px;color:#6b7fa3">Tiempo Muerto</span>
+                <span style="font-family:'Rajdhani',sans-serif;font-size:14px;color:{'#00ff9f' if k.get('idle_time_pct', 0) <= 5 else ('#ffb800' if k.get('idle_time_pct', 0) <= 10 else '#ff3b5c')};font-weight:700">{k.get('idle_time_pct', 0)}%</span>
+            </div>
+            <div style="display:flex;justify-content:space-between">
+                <span style="font-size:11px;color:#6b7fa3">Tasa de Scrap</span>
+                <span style="font-family:'Rajdhani',sans-serif;font-size:14px;color:{'#00ff9f' if k.get('scrap_rate', 0) <= 2 else ('#ffb800' if k.get('scrap_rate', 0) <= 5 else '#ff3b5c')};font-weight:700">{k.get('scrap_rate', 0)}% ({k.get('scrap_count', 0)} pzas)</span>
             </div>
         </div>""", unsafe_allow_html=True)
 
