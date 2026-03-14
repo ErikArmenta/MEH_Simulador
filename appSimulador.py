@@ -133,6 +133,8 @@ import plotly.express as px
 import plotly.graph_objects as go
 import altair as alt
 import os
+import json
+from datetime import datetime
 from simulator import run_simulation
 from line_balancer import (
     largest_candidate_rule, ranked_positional_weight,
@@ -609,6 +611,114 @@ if "Configuración" in menu:
 
     if st.button("💾  GUARDAR CONFIGURACIÓN", use_container_width=True):
         st.success("✅ Configuración guardada.")
+
+    # ─── EXPORT / IMPORT DE CONFIGURACIÓN ────────────────────────────────────
+    st.markdown("<hr style='border-color:#1e3a5f;margin:20px 0'>", unsafe_allow_html=True)
+    st.markdown(sec("📦", "EXPORTAR / IMPORTAR ESCENARIOS", "Config I/O"), unsafe_allow_html=True)
+
+    exp_col, imp_col = st.columns(2)
+
+    with exp_col:
+        st.markdown("""<div style="background:#0a0e1a;border:1px solid #1e3a5f;border-radius:10px;padding:14px">
+            <div style="font-size:11px;color:#6b7fa3;margin-bottom:8px">📤 EXPORTAR CONFIGURACIÓN</div>
+            <div style="font-size:10px;color:#4a5568;margin-bottom:12px">Descarga la configuración actual como JSON para guardarla o compartirla.</div>
+        """, unsafe_allow_html=True)
+
+        # Preparar JSON de configuración
+        config_export = {
+            "metadata": {
+                "version": "1.0",
+                "exported_at": datetime.now().isoformat(),
+                "app": "MEH Simulador de Manufactura"
+            },
+            "config": {
+                "piezas": st.session_state.config['piezas'],
+                "takt": st.session_state.config['takt'],
+                "kanban": st.session_state.config['kanban'],
+                "mtbf": st.session_state.config['mtbf'],
+                "mttr": st.session_state.config['mttr'],
+                "idle_factor": st.session_state.config.get('idle_factor', 5),
+                "defect_rate": st.session_state.config.get('defect_rate', 2),
+                "seed": st.session_state.config.get('seed'),
+                "estaciones": st.session_state.config['estaciones']
+            }
+        }
+        config_json = json.dumps(config_export, indent=2, ensure_ascii=False)
+
+        # Generar nombre de archivo con timestamp
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"meh_config_{timestamp}.json"
+
+        st.download_button(
+            label="📥 Descargar Configuración (.json)",
+            data=config_json,
+            file_name=filename,
+            mime="application/json",
+            use_container_width=True
+        )
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    with imp_col:
+        st.markdown("""<div style="background:#0a0e1a;border:1px solid #1e3a5f;border-radius:10px;padding:14px">
+            <div style="font-size:11px;color:#6b7fa3;margin-bottom:8px">📥 IMPORTAR CONFIGURACIÓN</div>
+            <div style="font-size:10px;color:#4a5568;margin-bottom:12px">Carga un archivo JSON con configuración guardada previamente.</div>
+        """, unsafe_allow_html=True)
+
+        uploaded_config = st.file_uploader(
+            "Selecciona archivo JSON",
+            type=['json'],
+            key="config_uploader",
+            label_visibility="collapsed"
+        )
+
+        if uploaded_config is not None:
+            try:
+                imported_data = json.load(uploaded_config)
+
+                # Validar estructura del JSON
+                if 'config' in imported_data:
+                    imported_config = imported_data['config']
+
+                    # Actualizar configuración
+                    if 'piezas' in imported_config:
+                        st.session_state.config['piezas'] = imported_config['piezas']
+                    if 'takt' in imported_config:
+                        st.session_state.config['takt'] = imported_config['takt']
+                    if 'kanban' in imported_config:
+                        st.session_state.config['kanban'] = imported_config['kanban']
+                    if 'mtbf' in imported_config:
+                        st.session_state.config['mtbf'] = imported_config['mtbf']
+                    if 'mttr' in imported_config:
+                        st.session_state.config['mttr'] = imported_config['mttr']
+                    if 'idle_factor' in imported_config:
+                        st.session_state.config['idle_factor'] = imported_config['idle_factor']
+                    if 'defect_rate' in imported_config:
+                        st.session_state.config['defect_rate'] = imported_config['defect_rate']
+                    if 'seed' in imported_config:
+                        st.session_state.config['seed'] = imported_config['seed']
+                    if 'estaciones' in imported_config:
+                        st.session_state.config['estaciones'] = imported_config['estaciones']
+
+                    # Mostrar info de metadata si existe
+                    if 'metadata' in imported_data:
+                        meta = imported_data['metadata']
+                        export_date = meta.get('exported_at', 'N/A')
+                        if export_date != 'N/A':
+                            export_date = export_date[:19].replace('T', ' ')
+                        st.success(f"✅ Configuración importada (exportada: {export_date})")
+                    else:
+                        st.success("✅ Configuración importada correctamente")
+
+                    st.rerun()
+                else:
+                    st.error("❌ Formato JSON inválido: falta sección 'config'")
+
+            except json.JSONDecodeError:
+                st.error("❌ Error: El archivo no es un JSON válido")
+            except Exception as e:
+                st.error(f"❌ Error al importar: {str(e)}")
+
+        st.markdown("</div>", unsafe_allow_html=True)
 
     # ─── VALIDACIÓN EN TIEMPO REAL ───────────────────────────────────────────
     st.markdown("<hr style='border-color:#1e3a5f;margin:20px 0'>", unsafe_allow_html=True)
