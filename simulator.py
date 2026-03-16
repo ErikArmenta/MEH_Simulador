@@ -450,12 +450,12 @@ def run_simulation(config):
     # ── CONFIGURACIÓN IDLE FACTOR ──────────────────────────────────────────
     # Factor de tiempo muerto (0.0 - 0.15 = 0% - 15%)
     # Simula microparos, cambios de herramienta, esperas de material
-    idle_factor = config.get('idle_factor', 0.0)
+    idle_factor = config.get('idle_factor', 0.0) / 100.0
 
     # ── CONFIGURACIÓN DEFECT RATE ──────────────────────────────────────────
     # Tasa de defectos/scrap (0.0 - 0.10 = 0% - 10%)
     # Simula piezas defectuosas que no pasan inspección de calidad
-    defect_rate = config.get('defect_rate', 0.0)
+    defect_rate = config.get('defect_rate', 0.0) / 100.0
 
     # ── CREACIÓN DE ESTACIONES ────────────────────────────────────────────────
     # Cada estación es un proceso independiente con su propia cola Kanban
@@ -515,7 +515,7 @@ def run_simulation(config):
     # ── Tiempo Idle Total ───────────────────────────────────────────────────
     # Suma de todos los tiempos muertos de todas las estaciones
     total_idle     = sum(ws.idle_time for ws in workstations)
-    idle_pct       = round((total_idle / t_final) * 100, 2) if t_final > 0 else 0
+    idle_pct       = round((total_idle / (t_final * len(workstations))) * 100, 2) if t_final > 0 else 0
 
     # ── Conteo de Scrap y Calidad Real ──────────────────────────────────────
     # Suma de todas las piezas scrap y buenas de todas las estaciones
@@ -538,7 +538,7 @@ def run_simulation(config):
     # Fórmula: ((tiempo_total - tiempo_paros - tiempo_idle) / tiempo_total) × 100
     # NOTA: El idle afecta disponibilidad efectiva pero se reporta separado
     total_down     = float(df_fail['Proceso'].sum()) if not df_fail.empty else 0
-    disponibilidad = round(((t_final - total_down) / t_final) * 100, 1)
+    disponibilidad = round(((t_final * len(workstations) - total_down) / (t_final * len(workstations))) * 100, 1) if t_final > 0 else 0
 
     # Utilización por Estación: % de tiempo que cada estación estuvo procesando
     util_data      = {ws.name: round((ws.busy_time / t_final) * 100, 1) for ws in workstations}
@@ -646,7 +646,7 @@ def run_simulation(config):
             "total_fallas":   len(df_fail),   # Número de eventos de falla
             # ── KPIs de Tiempo Muerto ───────────────────────────────────────
             "idle_time_total": round(total_idle, 2),  # Tiempo idle total (segundos)
-            "idle_pct":        idle_pct,              # % de tiempo en idle
+            "idle_time_pct":   idle_pct,              # % de tiempo en idle
             "idle_by_station": {ws.name: round(ws.idle_time, 2) for ws in workstations},
             # ── KPIs de Scrap/Calidad ────────────────────────────────────────
             "scrap_count":     total_scrap,    # Total de piezas scrap
