@@ -135,7 +135,7 @@ import altair as alt
 import os
 import json
 from datetime import datetime
-from simulator import run_simulation
+from TestSimuladorFOXIA import run_simulation
 from line_balancer import (
     largest_candidate_rule, ranked_positional_weight,
     balance_metrics, stations_to_config, build_precedence_positions,
@@ -1395,4 +1395,3 @@ elif "Balanceo" in menu:
                 st.session_state.results = None
                 st.success(f"✅ {len(new_est)} estaciones cargadas · Takt={BL['takt']}s · Ve a ▶️ Ejecución.")
         st.markdown('</div>', unsafe_allow_html=True)
-
