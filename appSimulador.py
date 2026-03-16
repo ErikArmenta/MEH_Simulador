@@ -135,7 +135,7 @@ import altair as alt
 import os
 import json
 from datetime import datetime
-from TestSimuladorFOXIA import run_simulation
+from simulador import run_simulation
 from line_balancer import (
     largest_candidate_rule, ranked_positional_weight,
     balance_metrics, stations_to_config, build_precedence_positions,
